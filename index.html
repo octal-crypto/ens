@@ -100,7 +100,7 @@
                 e.preventDefault ? e.preventDefault() : e.returnValue = false;
 
                 // Capture input and reset the UI
-                var domains = textarea.value.split(" ");
+                var domains = textarea.value.split(/\r?\n| /);
                 reset();
 
                 // lowercase, sort, and dedupe the domains

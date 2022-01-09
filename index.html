@@ -11,8 +11,8 @@
         button { cursor:pointer; font-size:19px; border-width:3px; padding:2px; }
         table { margin-left:auto; margin-right:auto; }
         th { padding:3px; }
-        td.registered { background-color:red; }
-        td.available { background-color:green; }
+        td.registered { background-color:red; border-style: none; }
+        td.available { background-color:green; border-style: none; }
         td {
             text-align: left;
             padding: 3px;
@@ -177,14 +177,15 @@
 
                     // Add a row to the table
                     var row = results.insertRow();
-                    var avail = row.insertCell();
-                    avail.className = (expires || address) ? "registered" : "available";
+                    row.insertCell().className = (expires || address) ? "registered" : "available";
                     var link = document.createElement("a");
                     link.innerHTML = name;
                     link.setAttribute("href", "https://app.ens.domains/name/"+name+".eth/details"); 
                     row.insertCell().appendChild(link);
                     row.insertCell().appendChild(document.createTextNode(address));
-                    row.insertCell().appendChild(document.createTextNode(expires));
+                    var expireCell = row.insertCell();
+                    expireCell.appendChild(document.createTextNode(expires));
+                    expireCell.style.whiteSpace = "nowrap";
                 }
             }
 

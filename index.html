@@ -1,0 +1,248 @@
+<!-- Website to search ENS domains -->
+<!DOCTYPE html>
+<html>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width,initial-scale=1">
+    <style>
+        body { text-align:center; margin:0; font-size:16px; }
+        body, button { font-family:monospace; }
+        #title { font-size:35px; font-weight:bold; margin: 5px 40px 0px 40px; }
+        label { font-size:17px; }
+        button, textarea { background-color:transparent; color:inherit; }
+        button { cursor:pointer; font-size:19px; border-width:3px; padding:2px; }
+        table { margin-left:auto; margin-right:auto; }
+        th { font-size:16px; padding:3px; }
+        td.registered { background-color:red; }
+        td.available { background-color:green; }
+        td {
+            font-size: 16px;
+            text-align: left;
+            padding: 3px;
+            border-width: 1px;
+            border-style: solid;
+            word-break: break-all;
+        }
+        textarea {
+            width: 85%;
+            max-width: 420px;
+            height:80px;
+            font-size: 16px;
+            overflow: auto;
+            border-width: 3px;
+        }
+        button[type="submit"] {
+            font-size: 30px;
+            font-weight: bold;
+            font-family: monospace;
+        }
+        #theme {
+            font-family: initial;
+            position: absolute;
+            top:0px;
+            right:0px;
+            width: 45px;
+            height: 45px;
+            font-size: 40px;
+            line-height: 40px;
+            padding: 0px;
+        }
+        .dark { background-color:black; color:white; }
+        .light  { background-color:white; color:black; }
+        .dark > #theme:after { content:"☼" }
+        .light > #theme:after { content:"☽" }
+        button:hover, button.selected { background-color:#00aeff; color:black; }
+        button, textarea { border-color:#00aeff; }
+        a { color:#00aeff; font-weight:bold; }
+        hr { background-color:#00aeff; height:1px; border:0; }
+    </style>
+    <body class="dark">
+        <button id="theme"></button>
+        <div id="title">Search ENS Domains</div>
+        <br>
+        <form id="form">
+            <label for="textarea">Space separated list of domains</label>
+            <br>
+            <textarea id="textarea" required="true"></textarea>
+            <br><br>
+            <button type="submit">Search</button>
+        </form>
+        <br><hr><br>
+        <button id="all" class="selected">All</button>
+        <button id="available">Available</button>
+        <button id="registered">Registered</button>
+        <br><br>
+        <table id="results"></table>
+        <br>
+        <div id="info"></div>
+        <br>
+        <div id="error"></div>
+        <br>
+        <script>
+            var textarea = document.getElementById("textarea");
+            var results = document.getElementById("results");
+            var all = document.getElementById("all");
+            var available = document.getElementById("available");
+            var registered = document.getElementById("registered");
+            var infoMsg = document.getElementById("info");
+            var errorMsg = document.getElementById("error");
+
+            // Submit when enter is pressed
+            document.getElementById("form").onsubmit = Submit;
+            textarea.onkeydown=function(e) {
+                e = e || window.event;
+                if (e && (e.key == "Enter" || e.keyCode == 13)) {
+                    Submit(e);
+                }
+            }
+
+            function Submit(e) {
+                // Client side only, don't submit form to backend
+                e = e || window.event;
+                e.preventDefault ? e.preventDefault() : e.returnValue = false;
+
+                // Capture input and reset the UI
+                var domains = textarea.value.split(" ");
+                reset();
+
+                // lowercase, sort, and dedupe the domains
+                for(var i=0; i < domains.length; i++) {
+                    domains[i] = domains[i].toLowerCase().replace(/\.eth$/, "");
+                }
+                domains.sort();
+                for(var i=0,j=0; i < domains.length; i++) {
+                    if (domains[i] && (i==0 || domains[i] != domains[j-1])) {
+                        domains[j++] = domains[i];
+                    }
+                }
+                domains = domains.slice(0, j);
+
+                // Query in 1,000 record batches (the most the subgraph will return)
+                queryBatches(domains, 0, 1000);
+            }
+
+            // Queries domains in sequential batches
+            function queryBatches(domains, i, batchSize) {
+                if (i >= domains.length) return;
+                var batch = domains.slice(i, i+batchSize);
+                query(batch,
+                    function(registrations) {
+                        addBatch(batch, registrations);
+                        queryBatches(domains, i+batchSize, batchSize);
+                    },
+                    function(error) { errorMsg.textContent += "Error: "+error }
+                );
+            }
+
+            // Queries the ENS subgraph
+            function query(domains, success, error) {
+                var req = new XMLHttpRequest();
+                req.open("POST", "https://api.thegraph.com/subgraphs/name/ensdomains/ens");
+                req.onreadystatechange = function() {
+                    if (this.readyState == 4) {
+                        if (req.status == 200) {
+                            var body = JSON.parse(this.responseText);
+                            if (!body.errors || body.errors.length == 0) {
+                                success(body.data.registrations);
+                            } else {
+                                error(body.errors);
+                            }
+                        } else {
+                            error("Code " + req.status + " - " + req.responseText);
+                        }
+                    }
+                };
+                req.send(JSON.stringify({
+                    query:"query($domains:[String!]){registrations(first:1000,"+
+                          "where:{labelName_in:$domains},orderBy:labelName,orderDirection:asc)"+
+                          "{labelName domain{resolvedAddress{id}} expiryDate}}",
+                    variables:{domains:domains}
+                }));
+            }
+
+            // Adds a batch of domains to the table
+            function addBatch(batch, registrations) {
+                addHeader();
+
+                for (var b=0,r=0; b < batch.length; b++) {
+                    var name = batch[b];
+                    var address = name.length < 3 ? "ENS domains must be at least 3 characters" : "";
+                    var expires = "";
+
+                    // If the domain is registered, include the address and expiry
+                    if (r < registrations.length && name == registrations[r].labelName) {
+                        var registration = registrations[r++];
+                        address = registration.domain.resolvedAddress;
+                        address = (address && address.id) ? address.id : "";
+                        expires = new Date(1000*registration.expiryDate).toISOString().slice(0,10);
+                    }
+
+                    // Add a row to the table
+                    var row = results.insertRow();
+                    var avail = row.insertCell();
+                    avail.className = (expires || address) ? "registered" : "available";
+                    var link = document.createElement("a");
+                    link.innerHTML = name;
+                    link.setAttribute("href", "https://app.ens.domains/name/"+name+".eth/details"); 
+                    row.insertCell().appendChild(link);
+                    row.insertCell().appendChild(document.createTextNode(address));
+                    row.insertCell().appendChild(document.createTextNode(expires));
+                }
+            }
+
+            // Adds a header row to the table if necessary
+            function addHeader() {
+                if (results.rows.length == 0) {
+                    var headers = ["", "Domain", "Address", "Expires"];
+                    var row = results.insertRow();
+                    for (i=0; i < headers.length; i++) {
+                        var th = document.createElement("th");
+                        th.textContent = headers[i];
+                        row.appendChild(th);
+                    }
+                }
+            }
+
+            // Filters domains on availability
+            all.onclick = filterDomains(function(r){ return true });
+            available.onclick = filterDomains(function(r){ return !r.cells[2].textContent && !r.cells[3].textContent});
+            registered.onclick = filterDomains(function(r){ return r.cells[3].textContent});
+
+            function filterDomains(filter) {
+                return function (e) {
+                    [all,available,registered].forEach(function(b){ b.className="" });
+                    e.target.className = "selected";
+
+                    // Hide domains that don't pass the filter
+                    var none = true;
+                    for (var i=1; i < results.rows.length; i++) {
+                        var row = results.rows[i];
+                        var show = filter(row);
+                        row.style.display = show ? "table-row" : "none";
+                        if (show) none = false;
+                    }
+
+                    // If there are no domains, hide the table and show a message
+                    results.style.display = none ? "none" : "table";
+                    infoMsg.textContent = none ? ("No domains " + ((e.target == available) ?
+                        "available" : (e.target == registered) ? "registered" : "")) : "";
+                }
+            }
+
+            // Resets the UI elements from the current search
+            function reset() {
+                textarea.value = "";
+                results.innerHTML = "";
+                results.style.display = "table";
+                [available,registered].forEach(function(b){ b.className="" });
+                all.className="selected";
+                infoMsg.innerHTML = "";
+                errorMsg.innerHTML = "";
+            }
+
+            // Switches between dark and light theme
+            document.getElementById("theme").onclick = function() {
+                document.body.className = document.body.className == "light" ? "dark" : "light";
+            }
+        </script>
+    </body>
+</html>

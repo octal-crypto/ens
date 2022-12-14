@@ -1,3 +1,3 @@
-Utilities for bulk searching ENS domains.
-
-https://octal.art/ens
+Utilities for bulk searching ENS domains:
+- Website: https://octal.art/ens
+- Shell script: [ens-search.sh](ens-search.sh)

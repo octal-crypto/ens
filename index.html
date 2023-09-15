@@ -167,8 +167,8 @@
                     }
                 };
                 req.send(JSON.stringify({
-                    query:"query($domains:[String!]){registrations(first:1000,"+
-                          "where:{labelName_in:$domains},orderBy:labelName,orderDirection:asc)"+
+                    query:"query($domains:[String!]){registrations"+
+                          "(first:1000,where:{labelName_in:$domains})"+
                           "{labelName domain{resolvedAddress{id}} expiryDate}}",
                     variables:{domains:domains}
                 }));
@@ -176,31 +176,43 @@
 
             // Adds a batch of domains to the table
             function addBatch(batch, registrations) {
+                // I'd rather have the subgraph do the orderBy, but its sort
+                // order is weird and seems to ignore certain characters.
+                // For example, it orders [aaa, a-b, acc]. So sort it ourselves.
+                registrations.sort((a,b) => a.labelName.localeCompare(b.labelName));
+
                 addHeader();
 
+                // For each domain that was searched
                 for (var b=0,r=0; b < batch.length; b++) {
                     var name = batch[b];
                     var address = name.length < 3 ? "ENS domains must be at least 3 characters" : "";
-                    var expires = "";
+                    var expiry = "";
+                    var available = true;
 
-                    // If the domain is registered, include the address and expiry
+                    // If the domain is registered
                     if (r < registrations.length && name == registrations[r].labelName) {
                         var registration = registrations[r++];
-                        address = registration.domain.resolvedAddress;
-                        address = (address && address.id) ? address.id : "";
-                        expires = new Date(1000*registration.expiryDate).toISOString().slice(0,10);
+                        expiry = new Date(1000*registration.expiryDate).toISOString().slice(0,10);
+
+                        // If the domain is not expired (considering 90 day grace period)
+                        if ((parseInt(registration.expiryDate) + 7776000) > (Date.now() / 1000)) {
+                            available = false;
+                            address = registration.domain.resolvedAddress;
+                            address = (address && address.id) ? address.id : "";
+                        }
                     }
 
                     // Add a row to the table
                     var row = results.insertRow();
-                    row.insertCell().className = (expires || address) ? "registered" : "available";
+                    row.insertCell().className = available ? "available" : "registered";
                     var link = document.createElement("a");
                     link.innerHTML = name;
                     link.setAttribute("href", "https://app.ens.domains/name/"+name+".eth/details"); 
                     row.insertCell().appendChild(link);
                     row.insertCell().appendChild(document.createTextNode(address));
                     var expireCell = row.insertCell();
-                    expireCell.appendChild(document.createTextNode(expires));
+                    expireCell.appendChild(document.createTextNode(expiry));
                     expireCell.style.whiteSpace = "nowrap";
                 }
             }
@@ -208,7 +220,7 @@
             // Adds a header row to the table if necessary
             function addHeader() {
                 if (results.rows.length == 0) {
-                    var headers = ["", "Domain", "Address", "Expires"];
+                    var headers = ["", "Domain", "Address", "Expiry"];
                     var row = results.insertRow();
                     for (i=0; i < headers.length; i++) {
                         var th = document.createElement("th");
